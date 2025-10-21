@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Elnaz's Tic Tac Toe</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <h1>Elnaz's Tic Tac Toe</h1>
+
+  <div>
+    <label for="mode">Mode:</label>
+    <select id="mode">
+      <option value="human">Human vs AI</option>
+      <option value="ai">AI vs AI</option>
+    </select>
+
+    <label for="algo">AI Algorithm:</label>
+    <select id="algo">
+      <option value="minimax">Minimax</option>
+      <option value="alphabeta">Alpha-Beta</option>
+    </select>
+
+    <button onclick="startGame()">Start Game</button>
+    <button onclick="startGame()">Restart Game</button>
+  </div>
+
+  <div id="ai-vs-ai-options" style="display: none;">
+    <label for="algoX">AI X Algorithm:</label>
+    <select id="algoX">
+      <option value="minimax">Minimax</option>
+      <option value="alphabeta">Alpha-Beta</option>
+    </select>
+
+    <label for="algoO">AI O Algorithm:</label>
+    <select id="algoO">
+      <option value="minimax">Minimax</option>
+      <option value="alphabeta">Alpha-Beta</option>
+    </select>
+  </div>
+
+  <p id="turn-indicator">X turn</p>
+
+  <div class="board">
+    {% for i in range(9) %}
+      <div class="cell" id="cell{{ i }}" onclick="cellClick({{ i }})"></div>
+    {% endfor %}
+    <canvas id="win-line"></canvas>
+  </div>
+
+  <p id="status"></p>
+  <p id="ai-time"></p>
+
+  <div id="stats-box">
+    <h3>AI Performance Stats</h3>
+    <pre id="stats-output" style="text-align:left; display:inline-block; background:#f0f0f0; padding:10px; border-radius:6px;"></pre>
+  </div>
+
+  <div id="scoreboard" style="margin-top: 20px;">
+    <h3>Scoreboard</h3>
+    <pre id="score-output" style="text-align:left; display:inline-block; background:#f0f0f0; padding:10px; border-radius:6px;">
+Games Played: 0
+X Wins: 0
+O Wins: 0
+Draws: 0
+    </pre>
+  </div>
+
+  <script>
+    let board = ["", "", "", "", "", "", "", "", ""];
+    let gameOver = false;
+    let aiStats = { X: { time: 0, nodes: 0, count: 0 }, O: { time: 0, nodes: 0, count: 0 } };
+    let humanStats = { ai: { time: 0, count: 0 } };
+    let score = { games: 0, xWins: 0, oWins: 0, draws: 0 };
+
+    document.getElementById("mode").addEventListener("change", function () {
+      const aiOptions = document.getElementById("ai-vs-ai-options");
+      const singleAI = document.getElementById("algo");
+      const label = singleAI.previousElementSibling;
+
+      if (this.value === "ai") {
+        aiOptions.style.display = "block";
+        singleAI.style.display = "none";
+        label.style.display = "none";
+      } else {
+        aiOptions.style.display = "none";
+        singleAI.style.display = "inline-block";
+        label.style.display = "inline-block";
+      }
+    });
+
+    function startGame() {
+      board = ["", "", "", "", "", "", "", "", ""];
+      gameOver = false;
+      aiStats = { X: { time: 0, nodes: 0, count: 0 }, O: { time: 0, nodes: 0, count: 0 } };
+      humanStats = { ai: { time: 0, count: 0 } };
+      document.getElementById("status").innerText = "";
+      document.getElementById("ai-time").innerText = "";
+      updateTurn("X");
+      clearBoard();
+      updateStatsDisplay();
+
+      const mode = document.getElementById("mode").value;
+      if (mode === "ai") runAIVsAI("X");
+    }
+
+    function cellClick(i) {
+      if (gameOver || board[i] !== "" || document.getElementById("mode").value !== "human") return;
+
+      board[i] = "X";
+      const cell = document.getElementById("cell" + i);
+      cell.innerText = "X";
+      cell.style.color = "blue";
+      updateTurn("O");
+
+      const result = checkLocalWinner();
+      if (result.winner) {
+        endGame(result.winner, result.combo);
+        return;
+      } else if (result.draw) {
+        document.getElementById("status").innerText = "It's a draw!";
+        gameOver = true;
+        score.games++;
+        score.draws++;
+        updateScoreboard();
+        updateStatsDisplay();
+        return;
+      }
+
+      fetch("/play", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          board: board,
+          algo: document.getElementById("algo").value,
+          player: "O"
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.move !== -1) {
+          board[data.move] = "O";
+          const aiCell = document.getElementById("cell" + data.move);
+          aiCell.innerText = "O";
+          aiCell.style.color = "red";
+          updateTurn("X");
+        }
+        if (data.winner) {
+          endGame(data.winner, data.combo);
+        } else if (data.draw) {
+          document.getElementById("status").innerText = "It's a draw!";
+          gameOver = true;
+          score.games++;
+          score.draws++;
+          updateScoreboard();
+        }
+
+        if (!gameOver) {
+          humanStats.ai.time += data.time;
+          humanStats.ai.count++;
+        }
+
+        document.getElementById("ai-time").innerText = `AI took ${data.time} ms`;
+        updateStatsDisplay();
+      });
+    }
+
+    function runAIVsAI(turn) {
+      if (gameOver || board.every(cell => cell !== "")) return;
+
+      const algo = turn === "X" ? document.getElementById("algoX").value : document.getElementById("algoO").value;
+
+      fetch("/aivsai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ board: board, turn: turn })
+      })
+      .then(res => res.json())
+      .then(data => {
+        board[data.move] = data.turn;
+        const cell = document.getElementById("cell" + data.move);
+        cell.innerText = data.turn;
+        cell.style.color = data.turn === "X" ? "blue" : "red";
+
+        aiStats[data.turn].time += data.time;
+        aiStats[data.turn].nodes += data.nodes;
+        aiStats[data.turn].count++;
+        updateStatsDisplay();
+        updateTurn(data.turn === "X" ? "O" : "X");
+
+        if (data.winner) {
+          endGame(data.winner, data.combo);
+          score.games++;
+          if (data.winner === "X") score.xWins++;
+          else if (data.winner === "O") score.oWins++;
+          updateScoreboard();
+        } else if (data.draw) {
+          document.getElementById("status").innerText = "It's a draw!";
+          gameOver = true;
+          score.games++;
+          score.draws++;
+          updateScoreboard();
+        } else {
+          setTimeout(() => runAIVsAI(data.turn === "X" ? "O" : "X"), 500);
+        }
+      });
+    }
+
+    function checkLocalWinner() {
+      const combos = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
+      ];
+      for (let combo of combos) {
+        const [a,b,c] = combo;
+        if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+          return { winner: board[a], combo: combo, draw: false };
+        }
+      }
+      if (!board.includes("")) {
+        return { winner: null, combo: [], draw: true };
+      }
+      return { winner: null, combo: [], draw: false };
+    }
+
+    function endGame(winner, combo) {
+      gameOver = true;
+      drawWinLine(combo);
+      const mode = document.getElementById("mode").value;
+
+      score.games++;
+      if (winner === "X") score.xWins++;
+      else if (winner === "O") score.oWins++;
+      updateScoreboard();
+
+      if (mode === "human") {
+        document.getElementById("status").innerText = `${winner} won!`;
+      } else {
+        document.getElementById("status").innerText = `${winner === "X" ? "Minimax AI" : "Alpha-Beta AI"} won!`;
+      }
+    }
+
+    function updateTurn(who) {
+      document.getElementById("turn-indicator").innerText = `${who} turn`;
+    }
+
+    function clearBoard() {
+      for (let i = 0; i < 9; i++) {
+        const cell = document.getElementById("cell" + i);
+        cell.innerText = "";
+        cell.style.color = "black";
+      }
+      const canvas = document.getElementById("win-line");
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawWinLine(combo) {
+      const canvas = document.getElementById("win-line");
+      const ctx = canvas.getContext("2d");
+      const rect = document.querySelector(".board").getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+      canvas.style.display = "block";
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 5;
+
+      const getCenter = (cellId) => {
+        const cell = document.getElementById("cell" + cellId);
+        const r = cell.getBoundingClientRect();
+        return [r.left + r.width / 2 - rect.left, r.top + r.height / 2 - rect.top];
+      };
+
+      const [x1, y1] = getCenter(combo[0]);
+      const [x2, y2] = getCenter(combo[2]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    function updateStatsDisplay() {
+      const stats = document.getElementById("stats-output");
+      const mode = document.getElementById("mode").value;
+
+      if (mode === "ai") {
+        const algoX = document.getElementById("algoX").value;
+        const algoO = document.getElementById("algoO").value;
+        const xAvg = (aiStats.X.time / aiStats.X.count || 0).toFixed(2);
+        const oAvg = (aiStats.O.time / aiStats.O.count || 0).toFixed(2);
+        stats.innerText =
+          `X (${algoX})\n  Total Time: ${aiStats.X.time.toFixed(2)} ms\n  Moves: ${aiStats.X.count}\n  Avg: ${xAvg} ms\n\n` +
+          `O (${algoO})\n  Total Time: ${aiStats.O.time.toFixed(2)} ms\n  Moves: ${aiStats.O.count}\n  Avg: ${oAvg} ms`;
+      } else {
+        const algo = document.getElementById("algo").value;
+        const avg = (humanStats.ai.time / humanStats.ai.count || 0).toFixed(2);
+        stats.innerText =
+          `AI (${algo})\n  Total Time: ${humanStats.ai.time.toFixed(2)} ms\n  Moves: ${humanStats.ai.count}\n  Avg: ${avg} ms`;
+      }
+    }
+
+    function updateScoreboard() {
+      document.getElementById("score-output").innerText =
+        `Games Played: ${score.games}\n` +
+        `X Wins: ${score.xWins}\n` +
+        `O Wins: ${score.oWins}\n` +
+        `Draws: ${score.draws}`;
+    }
+  </script>
+</body>
+</html>
